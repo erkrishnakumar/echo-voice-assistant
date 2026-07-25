@@ -1,0 +1,26 @@
+# secrets & local config
+.env
+
+# local data
+*.db
+*.sqlite3
+data/
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# os / editor
+.DS_Store
+.idea/
+.vscode/
+
+# voice binaries and models — never commit these
+**/bin/whisper/
+**/bin/piper/
+**/bin/models/
+bin/

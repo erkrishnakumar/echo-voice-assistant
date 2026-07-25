@@ -1,0 +1,49 @@
+services:
+  # ---- PostgreSQL: Echo's data store (reminders, calendar events) ----
+  postgres:
+    image: postgres:16-alpine
+    container_name: echo-postgres
+    ports:
+      # published to localhost so the API running on your host can reach it
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-echo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-echo_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-echo_db}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-echo}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ---- Ollama: the local LLM server ----
+  ollama:
+    image: ollama/ollama:latest
+    container_name: echo-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    # --- GPU (NVIDIA) users: uncomment to enable acceleration ---
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+volumes:
+  postgres-data:
+  ollama-models:
