@@ -59,6 +59,19 @@ def control_smart_device(device: str, action: str) -> dict:
     return {"ok": True, "device": device, "state": action}
 
 
+def get_current_time() -> dict:
+    """Return the current local date and time."""
+    now = dt.datetime.now()
+    hour12 = now.hour % 12 or 12
+    ampm = "AM" if now.hour < 12 else "PM"
+    spoken = f"{hour12}:{now.minute:02d} {ampm} on {now.strftime('%A, %B')} {now.day}"
+    return {
+        "date": now.strftime("%Y-%m-%d"),
+        "time": now.strftime("%H:%M"),
+        "spoken": spoken,
+    }
+
+
 # ---- schemas (the contract the LLM sees) ---------------------------------
 
 TOOLS = [
@@ -114,12 +127,22 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_current_time",
+            "description": "Get the current date and time. Use this whenever the "
+            "user asks what time or date it is.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
 ]
 
 DISPATCH = {
     "set_reminder": set_reminder,
     "get_calendar_events": get_calendar_events,
     "control_smart_device": control_smart_device,
+    "get_current_time": get_current_time,
 }
 
 

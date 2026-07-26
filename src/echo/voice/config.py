@@ -51,6 +51,9 @@ class VoiceSettings:
     silence_seconds: float     # this much silence ends an utterance
     max_utterance_seconds: float
     conversation_timeout: float  # silence before leaving conversation mode
+    # personalization
+    user_name: str
+    user_title: str
 
 
 def load_voice_settings() -> VoiceSettings:
@@ -68,4 +71,6 @@ def load_voice_settings() -> VoiceSettings:
         silence_seconds=_get_float("VOICE_SILENCE_SECONDS", 1.0),
         max_utterance_seconds=_get_float("VOICE_MAX_UTTERANCE_SECONDS", 15.0),
         conversation_timeout=_get_float("VOICE_CONVERSATION_TIMEOUT", 12.0),
+        user_name=_get("USER_NAME", "Krishna"),
+        user_title=_get("USER_TITLE", "Sir"),
     )

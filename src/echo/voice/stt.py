@@ -14,9 +14,17 @@ from __future__ import annotations
 
 import subprocess
 import tempfile
+import re
 from pathlib import Path
 
 from echo.voice.config import VoiceSettings
+
+
+def _clean(text: str) -> str:
+    """Strip bracketed non-speech markers like [BLANK_AUDIO], (music)."""
+    text = re.sub(r"\[[^\]]*\]", "", text)   # [BLANK_AUDIO], [MUSIC]
+    text = re.sub(r"\([^)]*\)", "", text)     # (music), (applause)
+    return " ".join(text.split()).strip()
 
 
 class WhisperSTT:
@@ -44,12 +52,18 @@ class WhisperSTT:
                 "-of", str(out_prefix),  # output file prefix
                 "-nt",                   # no timestamps
                 "-l", "en",
+                "-ng",                   # NO GPU (you have none; avoids GPU alloc)
+                "-t", "4",               # limit threads (less memory per run)
+                "-bs", "1",              # greedy decode (beam search uses more RAM)
             ]
             proc = subprocess.run(cmd, capture_output=True, text=True)
             if proc.returncode != 0:
                 raise RuntimeError(f"whisper.cpp failed: {proc.stderr.strip()}")
             txt_file = out_prefix.with_suffix(".txt")
-            if not txt_file.exists():
-                # some builds print to stdout instead of a file
-                return proc.stdout.strip()
-            return txt_file.read_text(encoding="utf-8").strip()
+            raw = (
+                txt_file.read_text(encoding="utf-8").strip()
+                if txt_file.exists()
+                else proc.stdout.strip()
+            )
+            # whisper.cpp sometimes emits bracketed non-speech markers
+            return _clean(raw)

@@ -46,6 +46,7 @@ class Settings:
     max_tool_rounds: int
     timeout: int
     keep_alive: str
+    llm_retries: int
     # --- database ---
     database_url: str
     # --- api ---
@@ -73,6 +74,7 @@ def _load() -> Settings:
         max_tool_rounds=_get_int("ECHO_MAX_TOOL_ROUNDS", 4),
         timeout=_get_int("ECHO_TIMEOUT", 120),
         keep_alive=_get("OLLAMA_KEEP_ALIVE", "30m"),
+        llm_retries=_get_int("ECHO_LLM_RETRIES", 2),
         database_url=_build_database_url(),
         api_host=_get("ECHO_API_HOST", "0.0.0.0"),
         api_port=_get_int("ECHO_API_PORT", 8000),
