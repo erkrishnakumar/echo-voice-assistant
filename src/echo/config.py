@@ -41,8 +41,11 @@ def _get_int(key: str, default: int) -> int:
 @dataclass(frozen=True)
 class Settings:
     # --- LLM ---
+    llm_provider: str
+    groq_api_key: str | None
     ollama_url: str
     model: str
+    fallback_model: str | None
     max_tool_rounds: int
     timeout: int
     keep_alive: str
@@ -52,6 +55,10 @@ class Settings:
     # --- api ---
     api_host: str
     api_port: int
+    # --- owner identity ---
+    owner_name: str
+    owner_role: str
+    owner_bio: str
 
 
 def _build_database_url() -> str:
@@ -68,9 +75,16 @@ def _build_database_url() -> str:
 
 
 def _load() -> Settings:
+    provider = _get("LLM_PROVIDER", "ollama").lower()
+    model = _get("ECHO_MODEL", "qwen2.5:3b") if provider == "ollama" else _get("GROQ_MODEL", "llama-3.3-70b-versatile")
+    fallback = _get("GROQ_FALLBACK_MODEL", "llama-3.1-8b-instant") if provider == "groq" else None
+    
     return Settings(
+        llm_provider=provider,
+        groq_api_key=_get("GROQ_API_KEY", None),
         ollama_url=_get("OLLAMA_URL", "http://localhost:11434/api/chat"),
-        model=_get("ECHO_MODEL", "qwen2.5:3b"),
+        model=model,
+        fallback_model=fallback,
         max_tool_rounds=_get_int("ECHO_MAX_TOOL_ROUNDS", 4),
         timeout=_get_int("ECHO_TIMEOUT", 120),
         keep_alive=_get("OLLAMA_KEEP_ALIVE", "30m"),
@@ -78,6 +92,15 @@ def _load() -> Settings:
         database_url=_build_database_url(),
         api_host=_get("ECHO_API_HOST", "0.0.0.0"),
         api_port=_get_int("ECHO_API_PORT", 8000),
+        owner_name=_get("OWNER_NAME", "Krishna Kumar"),
+        owner_role=_get(
+            "OWNER_ROLE", "an Artificial Intelligence and Machine Learning Engineer"
+        ),
+        owner_bio=_get(
+            "OWNER_BIO",
+            "Krishna Kumar built me — he is an AI/ML engineer who enjoys "
+            "building intelligent systems like this one.",
+        ),
     )
 
 

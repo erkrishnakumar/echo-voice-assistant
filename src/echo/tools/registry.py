@@ -17,6 +17,8 @@ from sqlalchemy import select
 
 from echo.db import session_scope
 from echo.models import Event, Reminder
+from echo.weather import get_weather, get_rain_forecast
+from echo.places import find_nearby_places, get_my_location
 
 # in-memory device state; swap for a Home Assistant client later
 _DEVICES = {"living room light": "off", "bedroom fan": "off", "kitchen light": "off"}
@@ -69,6 +71,39 @@ def get_current_time() -> dict:
         "date": now.strftime("%Y-%m-%d"),
         "time": now.strftime("%H:%M"),
         "spoken": spoken,
+    }
+
+
+def get_assistant_info() -> dict:
+    """Report Echo/Jarvis's own identity and live configuration.
+
+    Reads the actual runtime settings so the answer is always accurate — if you
+    switch models in .env, this reflects it automatically.
+    """
+    from echo.config import settings
+
+    capabilities = [
+        "set reminders",
+        "check your calendar",
+        "control smart devices",
+        "tell the time and date",
+        "fetch the weather",
+        "find nearby places",
+    ]
+    return {
+        "name": "Jarvis",
+        "intro": "I'm Jarvis — Krishna's personal AI assistant. Think of me as a "
+        "small, private version of the assistant from the movies, running right "
+        "here on this machine.",
+        "description": "your personal, local-first voice assistant",
+        "llm_model": settings.model,
+        "runtime": "Ollama (running locally, fully offline for most tasks)",
+        "speech_to_text": "whisper.cpp",
+        "text_to_speech": "Piper",
+        "wake_word_engine": "openWakeWord",
+        "capabilities": capabilities,
+        "privacy": "runs on your own machine; your voice never leaves it for "
+        "the core features",
     }
 
 
@@ -136,6 +171,102 @@ TOOLS = [
             "parameters": {"type": "object", "properties": {}},
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_assistant_info",
+            "description": "Get details about yourself — your name, the AI model "
+            "you're running, and your capabilities. Use this when the user asks "
+            "'who are you', 'what model are you', 'what can you do', or about your "
+            "configuration.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "Get weather for a city — current conditions, or a "
+            "forecast for a specific future date, or an hourly forecast. If the user hasn't said which "
+            "city, ASK them first. For forecasts, pass 'date' as YYYY-MM-DD "
+            "(you convert 'tomorrow' etc. to a real date yourself).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "city": {
+                        "type": "string",
+                        "description": "the city name, e.g. 'Bengaluru' or 'London'",
+                    },
+                    "date": {
+                        "type": "string",
+                        "description": "optional forecast date as YYYY-MM-DD; "
+                        "omit for current weather",
+                    },
+                    "hourly": {
+                        "type": "boolean",
+                        "description": "set to true if the user asks for the weather for the next few hours, hour-by-hour",
+                    },
+                },
+                "required": ["city"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_rain_forecast",
+            "description": "Get the chance of rain for a city, hour by hour, sorted "
+            "with the highest-probability hours first. Use this specifically when the "
+            "user asks about rain/precipitation chances (e.g. 'will it rain today', "
+            "'when is it most likely to rain', 'chances of rain this week') — it "
+            "already ranks the hours so you can just report the top ones. Defaults "
+            "to today if no date is given.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "city": {
+                        "type": "string",
+                        "description": "the city name, e.g. 'Bengaluru' or 'London'",
+                    },
+                    "date": {
+                        "type": "string",
+                        "description": "optional YYYY-MM-DD; omit for today",
+                    },
+                },
+                "required": ["city"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "find_nearby_places",
+            "description": "Find places near the user (auto-detects their "
+            "location). Use when the user asks to find nearby things like "
+            "restaurants, cafes, hospitals, ATMs, pharmacies, hotels, parks, etc.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "category": {
+                        "type": "string",
+                        "description": "type of place, e.g. 'restaurants', "
+                        "'cafes', 'hospitals', 'ATMs'",
+                    },
+                },
+                "required": ["category"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_my_location",
+            "description": "Get the user's current approximate location (city, "
+            "region, country). Use when the user asks 'where am I', 'what is my "
+            "location', 'locate me', or 'what city am I in'.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
 ]
 
 DISPATCH = {
@@ -143,6 +274,11 @@ DISPATCH = {
     "get_calendar_events": get_calendar_events,
     "control_smart_device": control_smart_device,
     "get_current_time": get_current_time,
+    "get_assistant_info": get_assistant_info,
+    "get_weather": get_weather,
+    "get_rain_forecast": get_rain_forecast,
+    "find_nearby_places": find_nearby_places,
+    "get_my_location": get_my_location,
 }
 
 

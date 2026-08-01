@@ -100,8 +100,8 @@ class Microphone:
         silence_frames_needed = int(cfg.silence_seconds * 1000 / FRAME_MS)
         max_frames = int(cfg.max_utterance_seconds * 1000 / FRAME_MS)
         start_deadline_frames = int(start_timeout * 1000 / FRAME_MS)
-        # need this many consecutive loud frames (~0.15s) to confirm real speech
-        onset_frames_needed = int(0.15 * 1000 / FRAME_MS)
+        # need this many consecutive loud frames (~0.09s) to confirm real speech
+        onset_frames_needed = max(2, int(0.09 * 1000 / FRAME_MS))
 
         collected: list[np.ndarray] = []
         silent_run = 0

@@ -53,3 +53,27 @@ def test_get_current_time():
     r = call("get_current_time", {})
     assert "date" in r and "time" in r and "spoken" in r
     assert len(r["date"]) == 10  # YYYY-MM-DD
+
+
+def test_get_weather_needs_city():
+    r = call("get_weather", {"city": ""})
+    assert "error" in r
+
+
+def test_find_nearby_unknown_category():
+    r = call("find_nearby_places", {"category": "unicorns"})
+    assert "error" in r
+
+
+def test_get_assistant_info_dynamic():
+    r = call("get_assistant_info", {})
+    assert r["name"] == "Jarvis"
+    assert r["llm_model"]  # reflects live config
+    assert "capabilities" in r
+
+
+def test_get_my_location_registered():
+    # tool exists and is callable (network may fail in CI, that's fine)
+    r = call("get_my_location", {})
+    assert isinstance(r, dict)
+    assert "spoken" in r or "error" in r

@@ -5,6 +5,7 @@ python-dotenv>=1.0
 # database
 sqlalchemy>=2.0
 psycopg2-binary>=2.9
+alembic>=1.13
 
 # api
 fastapi>=0.110

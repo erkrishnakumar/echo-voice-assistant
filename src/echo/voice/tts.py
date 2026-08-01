@@ -45,17 +45,30 @@ class PiperTTS:
 
     def speak(self, text: str) -> None:
         """Synthesize and play through the default output device."""
+    def speak(self, text: str, should_stop=None) -> bool:
+        """
+        Synthesize and play through the default output device.
+
+        If `should_stop` is provided, it's called periodically during playback;
+        when it returns True, playback stops early (barge-in). Returns True if
+        it was interrupted, False if it finished normally.
+        """
         if not text.strip():
-            return
+            return False
         wav_path = self.synthesize(text)
         try:
-            _play_wav(wav_path)
+            return _play_wav(wav_path, should_stop)
         finally:
             wav_path.unlink(missing_ok=True)
 
 
-def _play_wav(path: Path) -> None:
-    """Play a WAV using sounddevice (cross-platform, no external player)."""
+def _play_wav(path: Path, should_stop=None) -> bool:
+    """
+    Play a WAV using sounddevice. If `should_stop()` returns True mid-playback,
+    stop immediately. Returns True if interrupted, else False.
+    """
+    import time
+
     import numpy as np
     import sounddevice as sd
 
@@ -63,5 +76,16 @@ def _play_wav(path: Path) -> None:
         rate = wf.getframerate()
         frames = wf.readframes(wf.getnframes())
     audio = np.frombuffer(frames, dtype=np.int16)
+
     sd.play(audio, rate)
-    sd.wait()
+    if should_stop is None:
+        sd.wait()
+        return False
+
+    # poll for a stop signal while audio plays
+    while sd.get_stream().active:
+        if should_stop():
+            sd.stop()
+            return True
+        time.sleep(0.05)
+    return False

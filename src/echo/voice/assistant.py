@@ -60,6 +60,20 @@ _SLEEP_PHRASES = {
     "goodnight", "good night", "dismiss", "quit", "exit",
 }
 
+# saying any of these cancels the current request and re-prompts (does NOT sleep)
+_CANCEL_PHRASES = {
+    "cancel", "never mind", "nevermind", "hang up", "hold on",
+    "wait wait", "forget it", "scratch that", "no wait", "stop stop",
+}
+
+# formal acknowledgements when the user cancels/corrects
+CANCEL_ACKS = [
+    "Of course, Sir. Go ahead — what did you mean?",
+    "No problem. Go ahead, Krishna.",
+    "Sure, Sir. I'm listening — what would you like?",
+    "Understood. Go ahead whenever you're ready.",
+]
+
 # spoken farewells when the user dismisses Jarvis ({name}/{title} filled in)
 FAREWELL_TEMPLATES = [
     "Goodbye, {name}! Just say the wake word when you need me.",
@@ -154,6 +168,10 @@ class VoiceAssistant:
         cleaned = text.strip().lower().strip(".!?,")
         return cleaned in _SLEEP_PHRASES
 
+    def _is_cancel_command(self, text: str) -> bool:
+        cleaned = text.strip().lower().strip(".!?,")
+        return cleaned in _CANCEL_PHRASES
+
     def _conversation(self) -> None:
         """Stay in a back-and-forth until the user says goodbye or goes quiet."""
         # first turn: user already triggered the wake word, record directly
@@ -164,7 +182,11 @@ class VoiceAssistant:
                 if self._is_sleep_command(text):
                     self._safe_speak(self._farewell())
                     return
-                self._respond(text)
+                if self._is_cancel_command(text):
+                    log.info("cancel heard; re-prompting")
+                    self._safe_speak(random.choice(CANCEL_ACKS))
+                else:
+                    self._respond(text)
 
         # subsequent turns: keep listening WITHOUT the wake word until silence
         while True:
@@ -180,6 +202,10 @@ class VoiceAssistant:
                 log.info("sleep command heard; going back to sleep")
                 self._safe_speak(self._farewell())
                 return
+            if self._is_cancel_command(text):
+                log.info("cancel heard; discarding and re-prompting")
+                self._safe_speak(random.choice(CANCEL_ACKS))
+                continue  # discard, listen fresh
             self._respond(text)
 
     def run(self) -> None:

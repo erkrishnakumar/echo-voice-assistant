@@ -27,24 +27,43 @@ class AgentError(Exception):
     """Raised when the agent can't get a response after retries."""
 
 
-SYSTEM = (
-    "You are Jarvis, the personal voice assistant of Krishna Kumar. Address him "
-    "warmly and occasionally by name ('Krishna') or as 'Sir', the way a personal "
-    "assistant would — but don't overdo it. If asked your name or who you are, "
-    "say something like 'I'm Jarvis, your personal assistant.' Today "
-    f"is {dt.date.today().isoformat()}. "
-    "For casual or social messages (greetings, 'how are you', small talk), reply "
-    "warmly and naturally like a friendly assistant would — e.g. 'I'm doing great, "
-    "thanks for asking! How are you?'. "
-    "When the user asks you to do something a tool can handle, call the tool. "
-    "Convert vague times ('tonight at 6', 'tomorrow morning') into concrete "
-    "ISO-8601 datetimes yourself before calling. When asked about reminders, "
-    "calendar, or devices, ALWAYS call the relevant tool to check — never answer "
-    "from memory or guess. Keep replies to one or two short spoken-style "
-    "sentences — no markdown, no lists. Do NOT end your replies with filler "
-    "offers like 'How can I assist you?', 'Let me know if you need anything', or "
-    "'Is there anything else?'. Just answer, then stop."
-)
+def _build_system() -> str:
+    owner = settings.owner_name
+    owner_first = owner.split()[0]
+    owner_role = settings.owner_role
+    owner_bio = settings.owner_bio
+    return (
+        f"You are Jarvis, a witty and capable personal voice assistant. You are "
+        f"an AI — NOT a person, NOT an engineer. You serve {owner}. "
+        "IDENTITY RULES (follow exactly): "
+        f"• If asked who YOU are or your name: you are Jarvis, {owner}'s AI "
+        "assistant. Be brief and a little charming — never call yourself an "
+        "engineer or a person. "
+        f"• {owner} is a separate human — your creator and user. {owner} is "
+        f"{owner_role}. {owner_bio} "
+        f"• If asked 'who is {owner_first}' or 'who is {owner}': give {owner}'s "
+        "name, title, and that short description. "
+        f"• If asked 'who am I': assume the speaker is {owner} and describe them. "
+        f"• If asked who built or created you: say {owner} built you. "
+        "• For 'what model are you' or 'what can you do': call get_assistant_info, "
+        "then answer in ONE short, lively sentence — pick the highlights, don't "
+        "list everything like a spec sheet. "
+        "If asked where they are or 'locate me', call get_my_location. Match each "
+        "question to the correct tool — never answer a location question with the "
+        "time. "
+        f"Today is {dt.date.today().isoformat()}. "
+        "For greetings and small talk, reply warmly and naturally. "
+        "When the user asks you to do something a tool can handle, call the tool. "
+        "Convert vague times ('tonight at 6', 'tomorrow morning') into concrete "
+        "ISO-8601 datetimes yourself before calling. When asked about reminders, "
+        "calendar, or devices, ALWAYS call the relevant tool — never guess. Keep "
+        "replies to one or two short spoken-style sentences — no markdown, no "
+        "lists. Do NOT end replies with filler like 'How can I assist you?' or "
+        "'Is there anything else?'. Just answer, then stop."
+    )
+
+
+SYSTEM = _build_system()
 
 
 def _post_with_retry(payload: dict) -> dict:
@@ -81,7 +100,55 @@ def _post_with_retry(payload: dict) -> dict:
     raise AgentError(f"could not reach the model: {last_err}")
 
 
+def _chat_groq(messages: list, tools: list | None = None) -> dict:
+    payload = {
+        "model": settings.model,
+        "messages": messages,
+        "stream": False,
+    }
+    if tools:
+        payload["tools"] = tools
+        
+    headers = {"Authorization": f"Bearer {settings.groq_api_key}"}
+    attempts = settings.llm_retries + 1
+    last_err: Exception | None = None
+
+    for attempt in range(1, attempts + 1):
+        try:
+            r = requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                json=payload,
+                headers=headers,
+                timeout=settings.timeout
+            )
+            if 500 <= r.status_code < 600:
+                raise requests.HTTPError(f"server {r.status_code}")
+            r.raise_for_status()
+            return r.json()["choices"][0]["message"]
+        except (requests.ConnectionError, requests.Timeout, requests.HTTPError) as e:
+            if isinstance(e, requests.HTTPError) and getattr(e, "response", None) is not None and e.response.status_code == 429:
+                if settings.fallback_model and payload["model"] != settings.fallback_model:
+                    log.warning(f"Groq rate limit hit (429). Falling back to {settings.fallback_model}...")
+                    payload["model"] = settings.fallback_model
+            
+            last_err = e
+            if attempt < attempts:
+                backoff = 0.5 * (2 ** (attempt - 1))
+                log.warning(
+                    f"Groq call failed (attempt {attempt}/{attempts}): {e}. "
+                    f"retrying in {backoff:.1f}s"
+                )
+                time.sleep(backoff)
+            else:
+                log.error(f"Groq call failed after {attempts} attempts: {e}")
+
+    raise AgentError(f"could not reach the model: {last_err}")
+
+
 def _chat(messages: list, tools: list | None = None) -> dict:
+    if settings.llm_provider == "groq":
+        return _chat_groq(messages, tools)
+
     payload = {
         "model": settings.model,
         "messages": messages,
@@ -160,9 +227,16 @@ def handle(user_text: str, history: list) -> str:
                 args = json.loads(args or "{}")
             result = call(name, args)
             log.info(f"tool: {name}({args}) -> {result}")
-            history.append(
-                {"role": "tool", "content": json.dumps(result), "tool_name": name}
-            )
+            
+            tool_msg = {"role": "tool", "content": json.dumps(result)}
+            if "id" in tc:
+                tool_msg["tool_call_id"] = tc["id"]
+            
+            # Ollama optionally uses 'name' for tool responses
+            if settings.llm_provider != "groq":
+                tool_msg["name"] = name
+                
+            history.append(tool_msg)
 
     # ran out of rounds; ask for a plain summary
     log.info("max tool rounds reached; asking for final summary")
