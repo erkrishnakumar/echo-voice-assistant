@@ -8,6 +8,7 @@ imported. Add new models to this list.
 """
 
 from echo.models.event import Event
+from echo.models.memory import Memory
 from echo.models.reminder import Reminder
 
-__all__ = ["Reminder", "Event"]
+__all__ = ["Reminder", "Event", "Memory"]

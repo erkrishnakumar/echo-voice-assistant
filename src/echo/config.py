@@ -46,6 +46,8 @@ class Settings:
     ollama_url: str
     model: str
     fallback_model: str | None
+    gemini_api_key: str | None
+    gemini_model: str
     max_tool_rounds: int
     timeout: int
     keep_alive: str
@@ -85,6 +87,8 @@ def _load() -> Settings:
         ollama_url=_get("OLLAMA_URL", "http://localhost:11434/api/chat"),
         model=model,
         fallback_model=fallback,
+        gemini_api_key=_get("GEMINI_API_KEY", None),
+        gemini_model=_get("GEMINI_MODEL", "gemini-flash-latest"),
         max_tool_rounds=_get_int("ECHO_MAX_TOOL_ROUNDS", 4),
         timeout=_get_int("ECHO_TIMEOUT", 120),
         keep_alive=_get("OLLAMA_KEEP_ALIVE", "30m"),

@@ -6,6 +6,8 @@ Voice entry point and component tester.
     python voice.py --test-stt     # record 5s, transcribe (checks mic + Whisper)
     python voice.py --test-wake    # listen and print when the wake word fires
     python voice.py --test-mic     # record one utterance, save, report size
+    python voice.py --test-animation  # just show the orb window
+    python voice.py --test-gesture    # print when the open-palm gesture fires
 
 Test each component ALONE before running the full loop — on slower hardware,
 debugging the whole chain at once is painful. Build confidence piece by piece.
@@ -97,6 +99,22 @@ def mic_level():
               "lower VOICE_SILENCE_THRESHOLD in .env to match.")
 
 
+def test_animation():
+    from echo.voice.animation import OrbAnimation
+    print("Opening the orb window — close it to stop.")
+    OrbAnimation().run()
+
+
+def test_gesture():
+    from echo.voice.gesture import GestureDetector
+
+    def on_gesture():
+        print("\n  • GESTURE DETECTED (open palm) — ready to serve, sir.")
+
+    print("Watching the camera for an open palm (not shown). Ctrl-C to stop.")
+    GestureDetector(on_gesture=on_gesture).run()
+
+
 def main():
     if "--test-tts" in sys.argv:
         test_tts()
@@ -108,6 +126,10 @@ def main():
         test_mic()
     elif "--mic-level" in sys.argv:
         mic_level()
+    elif "--test-animation" in sys.argv:
+        test_animation()
+    elif "--test-gesture" in sys.argv:
+        test_gesture()
     else:
         from echo.voice.assistant import VoiceAssistant
         VoiceAssistant().run()

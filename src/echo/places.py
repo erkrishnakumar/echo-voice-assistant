@@ -114,9 +114,10 @@ def _haversine(lat1, lon1, lat2, lon2) -> float:
     return 2 * R * math.asin(math.sqrt(a))
 
 
-def find_nearby_places(category: str, radius_m: int = 3000) -> dict:
+def find_nearby_places(category: str, radius_m: int = 3000, city: str | None = None) -> dict:
     """
-    Find places of a category near the user's IP location.
+    Find places of a category near the user's IP location, or near `city` if
+    given (geocoded the same way the weather tool resolves cities).
 
     Automatically widens the search (up to ~15km) if nothing is found nearby —
     helps in areas with sparse OpenStreetMap coverage or for categories that are
@@ -133,21 +134,35 @@ def find_nearby_places(category: str, radius_m: int = 3000) -> dict:
             "like restaurants, cafes, hospitals, ATMs, pharmacies, or hotels."
         }
 
-    loc = _detect_location()
-    if loc is None:
-        return {"error": "couldn't detect your location right now."}
+    if city and city.strip():
+        from echo.weather import _geocode
+        try:
+            geo = _geocode(city.strip())
+        except requests.RequestException as e:
+            return {"error": f"couldn't reach the geocoding service: {e}"}
+        if geo is None:
+            return {"error": f"couldn't find a place called '{city}'. Ask the user to clarify."}
+        loc = {
+            "lat": geo["latitude"], "lon": geo["longitude"],
+            "city": geo["name"], "region": "", "country": geo.get("country", ""),
+        }
+    else:
+        loc = _detect_location()
+        if loc is None:
+            return {"error": "couldn't detect your location right now."}
 
     key, value = tag
+    explicit_city = bool(city and city.strip())
     # widen the net until we find something (or give up at ~15km)
     for r_m in (radius_m, 6000, 15000):
-        result = _search(key, value, loc, r_m, cat)
+        result = _search(key, value, loc, r_m, cat, explicit_city)
         if result.get("count", 0) > 0:
             return result
         last = result
     return last  # the last (empty) result, with its "couldn't find" message
 
 
-def _search(key, value, loc, radius_m, cat) -> dict:
+def _search(key, value, loc, radius_m, cat, explicit_city: bool = False) -> dict:
     """One Overpass search at a given radius."""
     # search nodes, ways, AND relations — many places (restaurants, hospitals)
     # are tagged as ways/relations, not just points. `nwr` covers all three.
@@ -207,8 +222,9 @@ def _search(key, value, loc, radius_m, cat) -> dict:
     # spoken summary: the closest few
     top = places[:3]
     parts = [f"{p['name']}, {p['distance_m']} meters away" for p in top]
+    near = f"near {city}" if explicit_city else "near you"
     spoken = (
-        f"I found {len(places)} {cat} near you. The closest are: "
+        f"I found {len(places)} {cat} {near}. The closest are: "
         + "; ".join(parts)
         + f". I've saved the full list of {len(places)} to a file."
     )

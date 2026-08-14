@@ -16,6 +16,7 @@ Resilience:
 from __future__ import annotations
 
 import random
+import threading
 from pathlib import Path
 
 from echo.agent import AgentError, handle
@@ -93,7 +94,51 @@ class VoiceAssistant:
         self.stt = WhisperSTT(self.cfg)
         self.tts = PiperTTS(self.cfg)
         self.history: list = []
+        self.animation = None  # orb window; built in run() if pygame is available
+        self.gesture_detector = None  # built in run() if opencv/mediapipe are available
+        self._gesture_event = threading.Event()
         log.info("voice components ready")
+
+    def _set_animation_state(self, state: str) -> None:
+        if self.animation is not None:
+            self.animation.set_state(state)
+
+    def _start_animation(self):
+        """Build the orb window. Returns it, or None if pygame isn't installed."""
+        try:
+            from echo.voice.animation import OrbAnimation
+            return OrbAnimation()
+        except Exception:
+            log.warning("orb animation unavailable (pygame not installed?); "
+                        "continuing without it")
+            return None
+
+    def _start_gesture_detector(self) -> None:
+        """Start webcam gesture detection on a background thread, if available.
+
+        A detected open-palm gesture behaves exactly like the wake word — it
+        just sets a flag the main loop checks alongside `self.wake.triggered`.
+        Never shows the camera feed.
+        """
+        try:
+            from echo.voice.gesture import GestureDetector
+        except Exception:
+            log.warning("gesture detection unavailable (opencv/mediapipe not "
+                        "installed?); continuing with wake word only")
+            return
+
+        self.gesture_detector = GestureDetector(on_gesture=self._gesture_event.set)
+
+        def _run():
+            try:
+                self.gesture_detector.run()
+            except Exception:
+                if self.gesture_detector._running:
+                    # a real failure mid-run; a stop() in progress can still
+                    # race a final camera read and land here harmlessly
+                    log.exception("gesture detector stopped unexpectedly")
+
+        threading.Thread(target=_run, daemon=True).start()
 
     def _safe_speak(self, text: str) -> None:
         """Speak, but never let a TTS failure crash the loop."""
@@ -125,6 +170,7 @@ class VoiceAssistant:
     def _respond(self, text: str) -> None:
         """Run the agent and speak the reply, catching agent/LLM failures."""
         log.info(f"YOU: {text!r}")
+        self._set_animation_state("active")
         try:
             with timed(log, "agent (llm + tools)"):
                 reply = handle(text, self.history)
@@ -191,6 +237,7 @@ class VoiceAssistant:
         # subsequent turns: keep listening WITHOUT the wake word until silence
         while True:
             log.info("listening for your next command… (stay quiet to end)")
+            self._set_animation_state("listening")
             wav = self._record(listen=True)
             if wav is None:
                 log.info("no follow-up; going back to sleep")
@@ -208,24 +255,27 @@ class VoiceAssistant:
                 continue  # discard, listen fresh
             self._respond(text)
 
-    def run(self) -> None:
-        init_db()
-        with timed(log, "warm up model"):
-            from echo.agent import warm_up
-            warm_up()
-        log.info(f"say the wake word ('{self.wake.key}') once to start talking.")
-        log.info("Ctrl-C to quit.")
+    def _wake_loop(self) -> None:
+        """Wake word + gesture -> conversation. Runs on a background thread
+        when the orb animation owns the main thread; runs inline otherwise."""
         while True:  # outer loop: a crash in one conversation won't kill Echo
             try:
                 for frame in self.mic.frames():
-                    if self.wake.triggered(frame):
+                    if self.wake.triggered(frame) or self._gesture_event.is_set():
                         self.wake.reset()
+                        self._gesture_event.clear()
                         log.info("• wake word detected — entering conversation")
+                        self._set_animation_state("listening")
                         self._safe_speak(self._greeting())
                         self._conversation()
+                        self._set_animation_state("idle")
                         log.info("conversation ended; say the wake word again\n")
             except KeyboardInterrupt:
                 log.info("goodbye")
+                if self.animation is not None:
+                    self.animation.stop()
+                if self.gesture_detector is not None:
+                    self.gesture_detector.stop()
                 return
             except MemoryError:
                 log.error(
@@ -245,6 +295,35 @@ class VoiceAssistant:
                 log.exception("unexpected error in main loop; recovering")
                 import time
                 time.sleep(0.5)  # brief pause to avoid a tight crash loop
+
+    def run(self) -> None:
+        init_db()
+        with timed(log, "warm up model"):
+            from echo.agent import warm_up
+            warm_up()
+
+        self.animation = self._start_animation()
+        self._start_gesture_detector()
+
+        log.info(f"say the wake word ('{self.wake.key}') or show an open palm "
+                  "to the camera to start talking.")
+        log.info("Ctrl-C to quit.")
+
+        if self.animation is None:
+            # no window to own the main thread — run the wake loop directly
+            self._wake_loop()
+            return
+
+        # pygame's event loop must run on the main thread, so the wake/gesture
+        # loop moves to a background thread and the orb owns this one.
+        wake_thread = threading.Thread(target=self._wake_loop, daemon=True)
+        wake_thread.start()
+        try:
+            self.animation.run()  # blocks until the window is closed
+        except KeyboardInterrupt:
+            log.info("goodbye")
+        if self.gesture_detector is not None:
+            self.gesture_detector.stop()
 
 
 def main() -> None:

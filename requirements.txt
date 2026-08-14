@@ -17,5 +17,11 @@ sounddevice>=0.4          # microphone capture + playback
 openwakeword>=0.6         # offline wake-word detection
 # whisper.cpp and piper are BINARIES you download in setup, not pip packages
 
+# orb animation + gesture wake trigger (optional — assistant degrades
+# gracefully to wake-word-only if these aren't installed)
+pygame>=2.5               # orb window
+opencv-python>=4.9        # webcam capture
+mediapipe>=0.10           # hand-gesture detection
+
 # testing
 pytest>=8.0

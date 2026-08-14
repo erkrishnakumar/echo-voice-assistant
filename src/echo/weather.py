@@ -185,6 +185,63 @@ def _forecast_for_date(loc: dict, place: str, date: str) -> dict:
     }
 
 
+def get_local_time(city: str) -> dict:
+    """
+    Current local date/time in `city`, using Open-Meteo's timezone/UTC-offset
+    data for the geocoded location (no separate tz-database dependency).
+    """
+    if not city or not city.strip():
+        return {"error": "no city provided; ask the user which city."}
+
+    try:
+        loc = _geocode(city.strip())
+    except requests.RequestException as e:
+        return {"error": f"could not reach the geocoding service: {e}"}
+
+    if loc is None:
+        return {"error": f"couldn't find a place called '{city}'. Ask the user to clarify."}
+
+    place = loc["name"] + (f", {loc['country']}" if loc["country"] else "")
+
+    try:
+        r = requests.get(
+            FORECAST_URL,
+            params={
+                "latitude": loc["latitude"],
+                "longitude": loc["longitude"],
+                "current": "temperature_2m",
+                "timezone": "auto",
+            },
+            timeout=TIMEOUT,
+        )
+        r.raise_for_status()
+    except requests.RequestException as e:
+        return {"error": f"could not reach the time service: {e}"}
+
+    data = r.json()
+    offset_sec = data.get("utc_offset_seconds", 0)
+    tz_name = data.get("timezone", "")
+    now = dt.datetime.utcnow() + dt.timedelta(seconds=offset_sec)
+
+    hour12 = now.hour % 12 or 12
+    ampm = "AM" if now.hour < 12 else "PM"
+    spoken = (
+        f"It's {hour12}:{now.minute:02d} {ampm} on {now.strftime('%A, %B')} "
+        f"{now.day} in {place}"
+    )
+    if tz_name:
+        spoken += f" ({tz_name})"
+    spoken += "."
+
+    return {
+        "city": place,
+        "timezone": tz_name,
+        "date": now.strftime("%Y-%m-%d"),
+        "time": now.strftime("%H:%M"),
+        "spoken": spoken,
+    }
+
+
 def get_rain_forecast(city: str, date: str | None = None) -> dict:
     """
     Chance-of-rain forecast for a city on a given day (defaults to today).

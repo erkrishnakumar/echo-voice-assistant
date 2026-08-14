@@ -96,3 +96,6 @@ connect). Keep them consistent.
 - Fire reminders when due -> Redis + Celery (a real background-task use case).
 - Voice I/O -> whisper.cpp in, Piper out, wrapping the same agent.
 - Promote tools/registry.py to a proper MCP server.
+
+# To Test the animation
+python voice.py --test-animation

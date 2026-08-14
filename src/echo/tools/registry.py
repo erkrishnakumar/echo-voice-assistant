@@ -12,19 +12,85 @@ local state dict you can later wire to Home Assistant.
 from __future__ import annotations
 
 import datetime as dt
+import random
 
 from sqlalchemy import select
 
 from echo.db import session_scope
-from echo.models import Event, Reminder
-from echo.weather import get_weather, get_rain_forecast
+from echo.models import Event, Memory, Reminder
+from echo.weather import get_weather, get_rain_forecast, get_local_time
 from echo.places import find_nearby_places, get_my_location
 
 # in-memory device state; swap for a Home Assistant client later
 _DEVICES = {"living room light": "off", "bedroom fan": "off", "kitchen light": "off"}
 
+# when Jarvis was "born" — used to answer "how old are you"
+_BIRTH_DATE = dt.datetime(2026, 7, 25, 17, 39)
+
+# varied phrasing so the age answer doesn't feel scripted; {age} is filled in
+_AGE_TEMPLATES = [
+    "I've been up and running for {age}, Sir.",
+    "I've existed for {age} now.",
+    "It's been {age} since I first came online.",
+    "{age} and counting, Sir — feels like no time at all.",
+    "I came online {age} ago.",
+]
+
+
+def _format_age(delta: dt.timedelta) -> str:
+    """Human age string using the largest fitting unit pair: years+months if
+    >=365 days, months+weeks if >=30 days, weeks+days if >=7 days, else days."""
+    days = delta.days
+
+    def _plural(n: int, unit: str) -> str:
+        return f"{n} {unit}{'' if n == 1 else 's'}"
+
+    if days >= 365:
+        years, rem = divmod(days, 365)
+        months = rem // 30
+        parts = [_plural(years, "year")]
+        if months:
+            parts.append(_plural(months, "month"))
+    elif days >= 30:
+        months, rem = divmod(days, 30)
+        weeks = rem // 7
+        parts = [_plural(months, "month")]
+        if weeks:
+            parts.append(_plural(weeks, "week"))
+    elif days >= 7:
+        weeks, rem = divmod(days, 7)
+        parts = [_plural(weeks, "week")]
+        if rem:
+            parts.append(_plural(rem, "day"))
+    else:
+        parts = [_plural(days, "day")]
+
+    return " and ".join(parts)
+
 
 # ---- tool implementations -------------------------------------------------
+
+def remember_fact(fact: str) -> dict:
+    """Save a short personal fact about the user for recall in later
+    conversations (e.g. names, relationships, preferences)."""
+    fact = (fact or "").strip()
+    if not fact:
+        return {"error": "no fact provided"}
+    with session_scope() as s:
+        m = Memory(fact=fact)
+        s.add(m)
+        s.flush()
+        result = m.as_dict()
+    return {"ok": True, **result}
+
+
+def get_remembered_facts() -> list[str]:
+    """All remembered facts, oldest first. Not an LLM tool — used to inject
+    known facts into the system prompt every turn."""
+    with session_scope() as s:
+        rows = s.execute(select(Memory).order_by(Memory.created)).scalars().all()
+        return [r.fact for r in rows]
+
 
 def set_reminder(text: str, due: str) -> dict:
     """Store a reminder. `due` is an ISO-8601 datetime string."""
@@ -61,8 +127,11 @@ def control_smart_device(device: str, action: str) -> dict:
     return {"ok": True, "device": device, "state": action}
 
 
-def get_current_time() -> dict:
-    """Return the current local date and time."""
+def get_current_time(city: str | None = None) -> dict:
+    """Return the current date and time — for `city` if given, else the
+    machine's local time."""
+    if city:
+        return get_local_time(city)
     now = dt.datetime.now()
     hour12 = now.hour % 12 or 12
     ampm = "AM" if now.hour < 12 else "PM"
@@ -107,9 +176,43 @@ def get_assistant_info() -> dict:
     }
 
 
+def get_assistant_age() -> dict:
+    """How long Jarvis has existed, since `_BIRTH_DATE`."""
+    now = dt.datetime.now()
+    age_str = _format_age(now - _BIRTH_DATE)
+    return {
+        "born": _BIRTH_DATE.strftime("%Y-%m-%d %H:%M"),
+        "age": age_str,
+        "spoken": random.choice(_AGE_TEMPLATES).format(age=age_str),
+    }
+
+
 # ---- schemas (the contract the LLM sees) ---------------------------------
 
 TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "remember_fact",
+            "description": "Save a short personal fact about the user for "
+            "later recall — e.g. names of people in their life (partner, "
+            "family, friends, pets), preferences, or other personal details "
+            "they mention in passing. Call this QUIETLY whenever the user "
+            "states such a fact, without asking permission or announcing it. "
+            "Do not call this for the assistant's own facts, only the user's.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "fact": {
+                        "type": "string",
+                        "description": "a short, self-contained sentence, e.g. "
+                        "'Krishna's girlfriend is named Aditi'",
+                    },
+                },
+                "required": ["fact"],
+            },
+        },
+    },
     {
         "type": "function",
         "function": {
@@ -166,19 +269,32 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "get_current_time",
-            "description": "Get the current date and time. Use this whenever the "
-            "user asks what time or date it is.",
-            "parameters": {"type": "object", "properties": {}},
+            "description": "Get the current date and time — pass 'city' to get "
+            "that city's local time (its own timezone), or omit it for the "
+            "assistant's own machine time. Use this whenever the user asks what "
+            "time or date it is somewhere.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "city": {
+                        "type": "string",
+                        "description": "optional city name, e.g. 'New York' or "
+                        "'Tokyo'; omit for local machine time",
+                    },
+                },
+            },
         },
     },
     {
         "type": "function",
         "function": {
             "name": "get_assistant_info",
-            "description": "Get details about yourself — your name, the AI model "
-            "you're running, and your capabilities. Use this when the user asks "
-            "'who are you', 'what model are you', 'what can you do', or about your "
-            "configuration.",
+            "description": "Get details about YOURSELF (Jarvis, the AI) — your "
+            "name, the model you're running, and your capabilities. Use ONLY for "
+            "'who are you', 'what model are you', 'what can you do', or your "
+            "configuration. Do NOT use this for questions about the user "
+            "themselves (e.g. 'what is my profile', 'who am I') — those are "
+            "about the human, not you.",
             "parameters": {"type": "object", "properties": {}},
         },
     },
@@ -214,6 +330,16 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "get_assistant_age",
+            "description": "Get how long Jarvis has existed. Use this whenever "
+            "the user asks 'how old are you', 'when were you created/born', or "
+            "your age — never guess or say you have no age, always call this.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_rain_forecast",
             "description": "Get the chance of rain for a city, hour by hour, sorted "
             "with the highest-probability hours first. Use this specifically when the "
@@ -242,8 +368,9 @@ TOOLS = [
         "function": {
             "name": "find_nearby_places",
             "description": "Find places near the user (auto-detects their "
-            "location). Use when the user asks to find nearby things like "
-            "restaurants, cafes, hospitals, ATMs, pharmacies, hotels, parks, etc.",
+            "location), or near a specific place if the user names one. Use "
+            "when the user asks to find nearby things like restaurants, cafes, "
+            "hospitals, ATMs, pharmacies, hotels, parks, etc.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -251,6 +378,12 @@ TOOLS = [
                         "type": "string",
                         "description": "type of place, e.g. 'restaurants', "
                         "'cafes', 'hospitals', 'ATMs'",
+                    },
+                    "city": {
+                        "type": "string",
+                        "description": "optional area/city/neighborhood name "
+                        "the user asked about, e.g. 'Madhapur, Hyderabad'; omit "
+                        "to use the user's own detected location",
                     },
                 },
                 "required": ["category"],
@@ -270,11 +403,13 @@ TOOLS = [
 ]
 
 DISPATCH = {
+    "remember_fact": remember_fact,
     "set_reminder": set_reminder,
     "get_calendar_events": get_calendar_events,
     "control_smart_device": control_smart_device,
     "get_current_time": get_current_time,
     "get_assistant_info": get_assistant_info,
+    "get_assistant_age": get_assistant_age,
     "get_weather": get_weather,
     "get_rain_forecast": get_rain_forecast,
     "find_nearby_places": find_nearby_places,
@@ -282,11 +417,11 @@ DISPATCH = {
 }
 
 
-def call(name: str, args: dict) -> dict:
+def call(name: str, args: dict | None) -> dict:
     fn = DISPATCH.get(name)
     if fn is None:
         return {"error": f"no such tool '{name}'"}
     try:
-        return fn(**args)
+        return fn(**(args or {}))
     except TypeError as e:
         return {"error": f"bad arguments for {name}: {e}"}

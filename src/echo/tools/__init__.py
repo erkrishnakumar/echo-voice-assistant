@@ -1,3 +1,3 @@
-from .registry import TOOLS, call
+from .registry import TOOLS, call, get_remembered_facts
 
-__all__ = ["TOOLS", "call"]
+__all__ = ["TOOLS", "call", "get_remembered_facts"]
