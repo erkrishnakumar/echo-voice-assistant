@@ -23,5 +23,8 @@ pygame>=2.5               # orb window
 opencv-python>=4.9        # webcam capture
 mediapipe>=0.10           # hand-gesture detection
 
+# message channels (optional — a channel that can't load is skipped, not fatal)
+winotify>=1.1; sys_platform == "win32"   # desktop toast notifications
+
 # testing
 pytest>=8.0

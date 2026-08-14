@@ -17,7 +17,7 @@ from pathlib import Path
 
 import requests
 
-from echo.config import ROOT
+from echo.config import ROOT, settings
 
 # multiple free IP-geolocation providers — we try each until one works, so a
 # single provider being down or rate-limited doesn't break location detection.
@@ -86,6 +86,36 @@ def _detect_location() -> dict | None:
     return None
 
 
+_home_location_cache: dict | None = None
+_home_location_tried = False
+
+
+def _home_location() -> dict | None:
+    """Geocode HOME_LOCATION once and cache it — this is a fixed config
+    value, no need to hit the geocoder on every search."""
+    global _home_location_cache, _home_location_tried
+    if _home_location_tried:
+        return _home_location_cache
+    _home_location_tried = True
+
+    if not settings.home_location or not settings.home_location.strip():
+        return None
+
+    from echo.weather import _geocode
+    try:
+        geo = _geocode(settings.home_location.strip())
+    except requests.RequestException:
+        return None
+    if geo is None:
+        return None
+
+    _home_location_cache = {
+        "lat": geo["latitude"], "lon": geo["longitude"],
+        "city": geo["name"], "region": "", "country": geo.get("country", ""),
+    }
+    return _home_location_cache
+
+
 def get_my_location() -> dict:
     """Report the user's approximate current location (IP-based)."""
     loc = _detect_location()
@@ -147,12 +177,17 @@ def find_nearby_places(category: str, radius_m: int = 3000, city: str | None = N
             "city": geo["name"], "region": "", "country": geo.get("country", ""),
         }
     else:
-        loc = _detect_location()
+        loc = _home_location()
+        if loc is None:
+            loc = _detect_location()
         if loc is None:
             return {"error": "couldn't detect your location right now."}
 
     key, value = tag
-    explicit_city = bool(city and city.strip())
+    # "near you"/"near {city}" in the spoken reply only makes sense as "near
+    # you" for IP-detected location — a configured home or named city should
+    # be named explicitly.
+    explicit_city = bool((city and city.strip()) or settings.home_location)
     # widen the net until we find something (or give up at ~15km)
     for r_m in (radius_m, 6000, 15000):
         result = _search(key, value, loc, r_m, cat, explicit_city)

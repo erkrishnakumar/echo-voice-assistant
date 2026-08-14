@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from sqlalchemy import DateTime, Integer, String
+from sqlalchemy import Boolean, DateTime, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from echo.db import Base
@@ -19,6 +19,10 @@ class Reminder(Base):
     created: Mapped[dt.datetime] = mapped_column(
         DateTime, default=lambda: dt.datetime.now(), nullable=False
     )
+    # set once the scheduler has alerted the user, so it fires exactly once
+    fired: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
 
     def as_dict(self) -> dict:
         return {
@@ -26,4 +30,5 @@ class Reminder(Base):
             "text": self.text,
             "due": self.due.isoformat(),
             "created": self.created.isoformat(),
+            "fired": self.fired,
         }

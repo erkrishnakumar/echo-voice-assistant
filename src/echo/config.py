@@ -61,6 +61,8 @@ class Settings:
     owner_name: str
     owner_role: str
     owner_bio: str
+    # --- location ---
+    home_location: str | None
 
 
 def _build_database_url() -> str:
@@ -105,6 +107,7 @@ def _load() -> Settings:
             "Krishna Kumar built me — he is an AI/ML engineer who enjoys "
             "building intelligent systems like this one.",
         ),
+        home_location=_get("HOME_LOCATION", None),
     )
 
 

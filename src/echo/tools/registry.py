@@ -92,6 +92,13 @@ def get_remembered_facts() -> list[str]:
         return [r.fact for r in rows]
 
 
+def send_message(text: str, channel: str = "desktop", subject: str | None = None,
+                 to: str | None = None) -> dict:
+    """Send a message through one of the configured channels."""
+    from echo.channels import send
+    return send(channel=channel, text=text, subject=subject, to=to)
+
+
 def set_reminder(text: str, due: str) -> dict:
     """Store a reminder. `due` is an ISO-8601 datetime string."""
     try:
@@ -189,6 +196,19 @@ def get_assistant_age() -> dict:
 
 # ---- schemas (the contract the LLM sees) ---------------------------------
 
+def _channels_hint() -> str:
+    """Describe the live channels for the send_message schema. Falls back to a
+    generic phrase if the channel layer can't load, so TOOLS still builds."""
+    try:
+        from echo.channels import describe_channels
+        return describe_channels() or "none configured"
+    except Exception:
+        return "desktop"
+
+
+_CHANNELS_HINT = _channels_hint()
+
+
 TOOLS = [
     {
         "type": "function",
@@ -216,8 +236,42 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "send_message",
+            "description": "Send a message or notification. Use when the user "
+            "asks you to notify them, send a note, or message someone. "
+            "Available channels: " + _CHANNELS_HINT,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "the message body",
+                    },
+                    "channel": {
+                        "type": "string",
+                        "description": "which channel to send through; "
+                        "defaults to 'desktop'",
+                    },
+                    "subject": {
+                        "type": "string",
+                        "description": "optional title/subject line",
+                    },
+                    "to": {
+                        "type": "string",
+                        "description": "optional recipient, for channels that "
+                        "need one; desktop notifications ignore it",
+                    },
+                },
+                "required": ["text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "set_reminder",
-            "description": "Save a reminder for the user at a specific time.",
+            "description": "Save a reminder for the user at a specific time. "
+            "The user WILL be alerted at that time by a desktop notification.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -403,6 +457,7 @@ TOOLS = [
 ]
 
 DISPATCH = {
+    "send_message": send_message,
     "remember_fact": remember_fact,
     "set_reminder": set_reminder,
     "get_calendar_events": get_calendar_events,

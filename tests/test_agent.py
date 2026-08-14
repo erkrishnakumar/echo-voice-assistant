@@ -39,7 +39,9 @@ def _fake_response(content):
 def test_retry_succeeds_after_transient_failure():
     calls = {"n": 0}
 
-    def flaky(url, json, timeout):
+    # **kwargs so this fake works whichever provider _chat routes to — the
+    # Groq path passes `headers`, the Ollama path doesn't
+    def flaky(url, **kwargs):
         calls["n"] += 1
         if calls["n"] < 3:
             raise requests.ConnectionError("blip")
@@ -47,19 +49,19 @@ def test_retry_succeeds_after_transient_failure():
 
     with patch("echo.agent.requests.post", side_effect=flaky), \
          patch("echo.agent.time.sleep"):
-        result = agent._chat([{"role": "user", "content": "hi"}])
+        result = agent._post_with_retry({"model": "test", "messages": []})
     assert result["content"] == "ok"
     assert calls["n"] == 3
 
 
 def test_retry_raises_agent_error_when_exhausted():
-    def always_fail(url, json, timeout):
+    def always_fail(url, **kwargs):
         raise requests.ConnectionError("down")
 
     with patch("echo.agent.requests.post", side_effect=always_fail), \
          patch("echo.agent.time.sleep"):
         try:
-            agent._chat([{"role": "user", "content": "hi"}])
+            agent._post_with_retry({"model": "test", "messages": []})
             raised = False
         except agent.AgentError:
             raised = True

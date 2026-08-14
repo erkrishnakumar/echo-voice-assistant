@@ -96,8 +96,31 @@ class VoiceAssistant:
         self.history: list = []
         self.animation = None  # orb window; built in run() if pygame is available
         self.gesture_detector = None  # built in run() if opencv/mediapipe are available
+        self.scheduler = None  # reminder scheduler; built in run()
         self._gesture_event = threading.Event()
+        self._in_conversation = False
         log.info("voice components ready")
+
+    def _speak_reminder(self, text: str) -> None:
+        """Say a fired reminder aloud — but only while idle. Speaking over an
+        active turn would talk across the user and bleed TTS into the mic;
+        the desktop notification has already delivered it either way."""
+        if self._in_conversation:
+            log.info("reminder fired mid-conversation; notification only")
+            return
+        self._safe_speak(f"Reminder: {text}")
+
+    def _start_scheduler(self):
+        """Start the reminder scheduler. Returns it, or None if it can't run."""
+        try:
+            from echo.scheduler import ReminderScheduler
+            sched = ReminderScheduler(on_fire=self._speak_reminder)
+            sched.start()
+            return sched
+        except Exception:
+            log.exception("reminder scheduler unavailable; reminders will be "
+                          "saved but not fire")
+            return None
 
     def _set_animation_state(self, state: str) -> None:
         if self.animation is not None:
@@ -255,6 +278,16 @@ class VoiceAssistant:
                 continue  # discard, listen fresh
             self._respond(text)
 
+    def _shutdown(self) -> None:
+        """Stop the background workers. Safe to call more than once."""
+        for name in ("animation", "gesture_detector", "scheduler"):
+            worker = getattr(self, name, None)
+            if worker is not None:
+                try:
+                    worker.stop()
+                except Exception:
+                    log.exception(f"could not stop {name} cleanly")
+
     def _wake_loop(self) -> None:
         """Wake word + gesture -> conversation. Runs on a background thread
         when the orb animation owns the main thread; runs inline otherwise."""
@@ -266,16 +299,17 @@ class VoiceAssistant:
                         self._gesture_event.clear()
                         log.info("• wake word detected — entering conversation")
                         self._set_animation_state("listening")
-                        self._safe_speak(self._greeting())
-                        self._conversation()
+                        self._in_conversation = True
+                        try:
+                            self._safe_speak(self._greeting())
+                            self._conversation()
+                        finally:
+                            self._in_conversation = False
                         self._set_animation_state("idle")
                         log.info("conversation ended; say the wake word again\n")
             except KeyboardInterrupt:
                 log.info("goodbye")
-                if self.animation is not None:
-                    self.animation.stop()
-                if self.gesture_detector is not None:
-                    self.gesture_detector.stop()
+                self._shutdown()
                 return
             except MemoryError:
                 log.error(
@@ -304,6 +338,7 @@ class VoiceAssistant:
 
         self.animation = self._start_animation()
         self._start_gesture_detector()
+        self.scheduler = self._start_scheduler()
 
         log.info(f"say the wake word ('{self.wake.key}') or show an open palm "
                   "to the camera to start talking.")
@@ -322,8 +357,7 @@ class VoiceAssistant:
             self.animation.run()  # blocks until the window is closed
         except KeyboardInterrupt:
             log.info("goodbye")
-        if self.gesture_detector is not None:
-            self.gesture_detector.stop()
+        self._shutdown()
 
 
 def main() -> None:

@@ -8,6 +8,8 @@ Voice entry point and component tester.
     python voice.py --test-mic     # record one utterance, save, report size
     python voice.py --test-animation  # just show the orb window
     python voice.py --test-gesture    # print when the open-palm gesture fires
+    python voice.py --test-notify     # send one desktop notification
+    python voice.py --test-reminder   # set a reminder 10s out, watch it fire
 
 Test each component ALONE before running the full loop — on slower hardware,
 debugging the whole chain at once is painful. Build confidence piece by piece.
@@ -115,6 +117,40 @@ def test_gesture():
     GestureDetector(on_gesture=on_gesture).run()
 
 
+def test_notify():
+    from echo.channels import available_channels, send
+    print(f"Available channels: {available_channels()}")
+    r = send("desktop", "This is a test notification from Jarvis.",
+             subject="Jarvis")
+    print(f"Result: {r}")
+    print("Did a toast appear in the corner of your screen?")
+
+
+def test_reminder():
+    """End-to-end: schedule a reminder 10s out and wait for it to fire."""
+    import datetime as dt
+    import time
+    from echo.db import init_db, session_scope
+    from echo.logging_conf import setup_logging
+    from echo.models import Reminder
+    from echo.scheduler import ReminderScheduler
+
+    setup_logging()
+    init_db()
+    due = dt.datetime.now() + dt.timedelta(seconds=10)
+    with session_scope() as s:
+        s.add(Reminder(text="This is your test reminder", due=due))
+    print(f"Reminder set for {due:%H:%M:%S} (10s). Waiting…")
+
+    sched = ReminderScheduler(poll_seconds=2)
+    sched.start()
+    try:
+        time.sleep(15)
+    finally:
+        sched.stop()
+    print("Done — you should have seen a notification.")
+
+
 def main():
     if "--test-tts" in sys.argv:
         test_tts()
@@ -130,6 +166,10 @@ def main():
         test_animation()
     elif "--test-gesture" in sys.argv:
         test_gesture()
+    elif "--test-notify" in sys.argv:
+        test_notify()
+    elif "--test-reminder" in sys.argv:
+        test_reminder()
     else:
         from echo.voice.assistant import VoiceAssistant
         VoiceAssistant().run()
